@@ -1,150 +1,210 @@
-int const LED_RED = 5;
-int const LED_YELLOW = 18;
-int const LED_GREEN = 19;
-int const BUTTON = 4;  
-int nextOption = 1;
+const int BTN_PIN = 4;
+const int LED_RED = 5;  
+const int LED_YELLOW = 18;
+const int LED_GREEN = 19;
 
-char opt;
-unsigned long previousMillis = 0;
-bool blinking = false;  // Estado de intermitencia
+const unsigned long DEBOUNCE_DELAY = 50;   
+const unsigned long BLINK_INTERVAL  = 300;
 
-// Variables para control del pulsador
-int buttonState = HIGH;        
-int lastButtonState = HIGH;    
+int lastRawButton = HIGH;
+int buttonState = HIGH;
 unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 50;
+
+enum Mode {
+  MODE_MANUAL,
+  MODE_RED_ONLY,
+  MODE_GREEN_ONLY,
+  MODE_YELLOW_ONLY,
+  MODE_ALL_OFF,
+  MODE_ALL_ON,
+  MODE_BLINK
+};
+
+const int NUM_CYCLE_MODES = 6; 
+int modeIndex = 0;            
+Mode currentMode = MODE_MANUAL;
+
+bool ledRedState = false;
+bool ledYelState = false;
+bool ledGrnState = false;
+
+
+unsigned long lastBlinkMillis = 0;
+bool blinkOn = false;
 
 void setup() {
-  pinMode(LED_RED, OUTPUT); 
-  pinMode(LED_YELLOW, OUTPUT); 
-  pinMode(LED_GREEN, OUTPUT); 
-  pinMode(BUTTON, INPUT_PULLUP);
+  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_YELLOW, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(BTN_PIN, INPUT_PULLUP);
 
   Serial.begin(9600);
   Serial.println("Welcome");
   Serial.println("Press any key to show menu...");
+  setAllOff();
 }
 
 void loop() {
-  // Lectura del menú por Serial 
-  if (Serial.available() > 0) {
-    menu();
-    opt = Serial.read();
-    int selected = opt - '0'; // convertir char a número
+  handleButtonCycle();   
+  handleSerial();        
+  applyMode();           
+}
 
-    if (selected == nextOption) {
-      ejecutarOpcion(opt);
-      avanzarMenu();
-      menu();
-    } else {
-      Serial.print("Opción invalida. Debe elegir la opcion: ");
-      Serial.println(nextOption);
-    }
-  }
 
-  // Lectura del pulsador con anti-rebote 
-  int reading = digitalRead(BUTTON);
-  if (reading != lastButtonState) {
+void handleButtonCycle() {
+  int raw = digitalRead(BTN_PIN); 
+
+  if (raw != lastRawButton) {
     lastDebounceTime = millis();
   }
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (reading != buttonState) {
-      buttonState = reading;
+
+  if (millis() - lastDebounceTime > DEBOUNCE_DELAY) {
+    if (raw != buttonState) {
+      buttonState = raw;
+      
       if (buttonState == LOW) {
-        // Ejecuta la opción actual con el botón
-        Serial.print("Pulsador ejecuta opcion ");
-        Serial.println(nextOption);
-        ejecutarOpcion(nextOption + '0'); // Ejecuta como si fuera del menú
-        avanzarMenu();
-        menu();
+      
+        modeIndex = (modeIndex + 1) % NUM_CYCLE_MODES;
+        switch (modeIndex) {
+          case 0: currentMode = MODE_RED_ONLY;    Serial.println("Button -> MODE_RED_ONLY");    break;
+          case 1: currentMode = MODE_GREEN_ONLY;  Serial.println("Button -> MODE_GREEN_ONLY");  break;
+          case 2: currentMode = MODE_YELLOW_ONLY; Serial.println("Button -> MODE_YELLOW_ONLY"); break;
+          case 3: currentMode = MODE_ALL_OFF;     Serial.println("Button -> MODE_ALL_OFF");     break;
+          case 4: currentMode = MODE_ALL_ON;      Serial.println("Button -> MODE_ALL_ON");      break;
+          case 5: currentMode = MODE_BLINK;       Serial.println("Button -> MODE_BLINK");       break;
+        }
+    
+        lastBlinkMillis = millis();
+        blinkOn = false;
       }
     }
   }
-  lastButtonState = reading;
-  
-  // Intermitencia no bloqueante 
-  if (blinking) {
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= 500) {
-      previousMillis = currentMillis;
-      digitalWrite(LED_RED, !digitalRead(LED_RED));
-      digitalWrite(LED_YELLOW, !digitalRead(LED_YELLOW));
-      digitalWrite(LED_GREEN, !digitalRead(LED_GREEN));
+  lastRawButton = raw;
+}
+
+
+void handleSerial() {
+  if (Serial.available() > 0) {
+    char c = Serial.read();
+    if (c == '\r' || c == '\n') return;
+    menu();
+
+    switch (c) {
+      case '1': 
+        currentMode = MODE_RED_ONLY;
+        modeIndex = 0;
+        Serial.println("Serial: RED ONLY");
+        break;
+      case '2': 
+        ledRedState = false;
+        currentMode = MODE_MANUAL;
+        Serial.println("Serial: RED OFF (manual)");
+        break;
+      case '3': 
+        currentMode = MODE_YELLOW_ONLY;
+        modeIndex = 2;
+        Serial.println("Serial: YELLOW ONLY");
+        break;
+      case '4': 
+        ledYelState = false;
+        currentMode = MODE_MANUAL;
+        Serial.println("Serial: YELLOW OFF (manual)");
+        break;
+      case '5': 
+        currentMode = MODE_GREEN_ONLY;
+        modeIndex = 1;
+        Serial.println("Serial: GREEN ONLY");
+        break;
+      case '6': 
+        ledGrnState = false;
+        currentMode = MODE_MANUAL;
+        Serial.println("Serial: GREEN OFF (manual)");
+        break;
+      case '7': 
+        setAllOn();
+        currentMode = MODE_ALL_ON;
+        modeIndex = 4;
+        Serial.println("Serial: ALL ON");
+        break;
+      case '8': 
+        setAllOff();
+        currentMode = MODE_ALL_OFF;
+        modeIndex = 3;
+        Serial.println("Serial: ALL OFF");
+        break;
+      case '9': 
+        currentMode = MODE_BLINK;
+        modeIndex = 5;
+        lastBlinkMillis = millis();
+        blinkOn = false;
+        Serial.println("Serial: BLINK MODE");
+        break;
+      default:
+        Serial.print("Unknown option: "); Serial.println(c);
     }
   }
 }
 
-void ejecutarOpcion(char opt) {
-  switch (opt) {
-    case '1': digitalWrite(LED_RED, HIGH); break;
-    case '2': digitalWrite(LED_RED, LOW); break;
-    case '3': digitalWrite(LED_YELLOW, HIGH); break;
-    case '4': digitalWrite(LED_YELLOW, LOW); break;
-    case '5': digitalWrite(LED_GREEN, HIGH); break;
-    case '6': digitalWrite(LED_GREEN, LOW); break;
-    case '7':
-      digitalWrite(LED_RED, HIGH);
-      digitalWrite(LED_YELLOW, HIGH);
-      digitalWrite(LED_GREEN, HIGH);
+
+void applyMode() {
+  switch (currentMode) {
+    case MODE_MANUAL:
+      digitalWrite(LED_RED,  ledRedState ? HIGH : LOW);
+      digitalWrite(LED_YELLOW,  ledYelState ? HIGH : LOW);
+      digitalWrite(LED_GREEN,  ledGrnState ? HIGH : LOW);
       break;
-    case '8':
-      digitalWrite(LED_RED, LOW);
+
+    case MODE_RED_ONLY:
+      digitalWrite(LED_RED, HIGH);
       digitalWrite(LED_YELLOW, LOW);
       digitalWrite(LED_GREEN, LOW);
       break;
-    case '9':
-      blinking = !blinking;  // Alterna intermitencia
+
+    case MODE_GREEN_ONLY:
+      digitalWrite(LED_RED, LOW);
+      digitalWrite(LED_YELLOW, LOW);
+      digitalWrite(LED_GREEN, HIGH);
+      break;
+
+    case MODE_YELLOW_ONLY:
+      digitalWrite(LED_RED, LOW);
+      digitalWrite(LED_YELLOW, HIGH);
+      digitalWrite(LED_GREEN, LOW);
+      break;
+
+    case MODE_ALL_OFF:
+      setAllOff();
+      break;
+
+    case MODE_ALL_ON:
+      setAllOn();
+      break;
+
+    case MODE_BLINK:
+      if (millis() - lastBlinkMillis >= BLINK_INTERVAL) {
+        lastBlinkMillis = millis();
+        blinkOn = !blinkOn;
+        digitalWrite(LED_RED,  blinkOn ? HIGH : LOW);
+        digitalWrite(LED_YELLOW,  blinkOn ? HIGH : LOW);
+        digitalWrite(LED_GREEN,  blinkOn ? HIGH : LOW);
+      }
       break;
   }
 }
-// Avanza en el flujo secuencial
-void avanzarMenu() {
-  if (nextOption < 4) {
-    nextOption++;
-  } else if (nextOption == 4) {
-    nextOption = 5;
-  } else if (nextOption < 9) {
-    nextOption++;
-  } else if (nextOption == 9) {
-    nextOption = 1; // Reinicia después de la 9
-  }
+
+
+void setAllOff() {
+  digitalWrite(LED_RED, LOW);
+  digitalWrite(LED_YELLOW, LOW);
+  digitalWrite(LED_GREEN, LOW);
+  ledRedState = ledYelState = ledGrnState = false;
 }
 
-void accionPulsador() {
-  static int contador = 0;
-  contador++;
-  if (contador > 6) contador = 1;  // Reinicia ciclo
-
-  switch (contador) {
-    case 1: // Pulsación 1
-      digitalWrite(LED_RED, HIGH);
-      digitalWrite(LED_YELLOW, LOW);
-      digitalWrite(LED_GREEN, LOW);
-      break;
-    case 2: // Pulsación 2
-      digitalWrite(LED_GREEN, HIGH);
-      digitalWrite(LED_RED, LOW);
-      digitalWrite(LED_YELLOW, LOW);
-      break;
-    case 3: // Pulsación 3
-      digitalWrite(LED_YELLOW, HIGH);
-      digitalWrite(LED_RED, LOW);
-      digitalWrite(LED_GREEN, LOW);
-      break;
-    case 4: // Pulsación 4
-      digitalWrite(LED_RED, LOW);
-      digitalWrite(LED_YELLOW, LOW);
-      digitalWrite(LED_GREEN, LOW);
-      break;
-    case 5: // Pulsación 5
-      digitalWrite(LED_RED, HIGH);
-      digitalWrite(LED_YELLOW, HIGH);
-      digitalWrite(LED_GREEN, HIGH);
-      break;
-    case 6: // Pulsación 6
-      blinking = !blinking;  // Alterna intermitencia infinita
-      break;
-  }
+void setAllOn() {
+  digitalWrite(LED_RED, HIGH);
+  digitalWrite(LED_YELLOW, HIGH);
+  digitalWrite(LED_GREEN, HIGH);
+  ledRedState = ledYelState = ledGrnState = true;
 }
 
 void menu() {
@@ -158,6 +218,5 @@ void menu() {
   Serial.println("7. Turn on all");
   Serial.println("8. Turn off all");
   Serial.println("9. Intermitence");
-  Serial.print("Press option: ");
-  Serial.println(nextOption);
+  Serial.print("Press any option: ");
 }
